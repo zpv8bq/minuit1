@@ -42,9 +42,11 @@
 
 using namespace std;
 
-// Declare pointer to data as global (not elegant but TMinuit needs this).
+// Declare pointer to data as global
+// The use of global variables is a disfavored coding practice, but
+// in this case it will allow us to avoid writing more complex code
 TH1F *hdata;
-// also passing the fit function, to make the Minuit fcn more generic
+// also passing the fit function, to make the objective fcn more generic
 TF1 *fparam;
 
 //-------------------------------------------------------------------------
@@ -78,8 +80,13 @@ double calcNLL(TH1F* h, TF1* f){
 
 
 //-------------------------------------------------------------------------
-// Minuit fcn: calculates value of the function to be minimized.
-// This is the interface for our objective function
+// Minuit fcn: calculates value of the function to be minimized using
+// the data and the model function
+// This is the interface used to define our objective function.  We use
+// only a sub set of the input parameters below.
+// npar: number of parameters
+// par: array of aprameter values
+// f: the value of the objective function
 
 void fcn(int& npar, double* deriv, double& f, double par[], int flag){
 
@@ -89,7 +96,7 @@ void fcn(int& npar, double* deriv, double& f, double par[], int flag){
 
   f = calcNLL(hdata,fparam);
  
-}                         // end of fcn
+}
 
 //-------------------------------------------------------------------------
 
@@ -102,13 +109,13 @@ int main(int argc, char **argv) {
 
   TCanvas* canvas = new TCanvas();
   // ***************************************
-  // not important for this exmple
+  // not important for this example
   // Set a bunch of parameters to make the plot look nice
   canvas->SetFillColor(0);
   canvas->UseCurrentStyle();
   canvas->SetBorderMode(0);        
   canvas->SetFrameBorderMode(0);  
-  gROOT->SetStyle("Plain");
+  //gROOT->SetStyle("Plain");
   canvas->UseCurrentStyle();
   gROOT->ForceStyle();
 
@@ -121,15 +128,17 @@ int main(int argc, char **argv) {
   // ***************************************
 
 
-  // Generate some data in a histogram 
+  // Use this to generate some random data 
   TRandom2 r(0);
-
+  
   // create a histogram and fill it w/ randomly distributed data
-  // based on our function
+  // based on an exponential PDF
   double xmin = 0.0;
   double xmax = 5.0;
-  TH1F *hexp=new TH1F("hexp","exponential distribution",100,xmin,xmax);
-  for (int i=0; i<1000; i++){
+  int nentries = 1000;
+  TH1F *hexp=new TH1F("hexp","exponential distribution;x;# events",100,xmin,xmax);
+
+  for (int i=0; i<nentries; i++){
     hexp->Fill(r.Exp(3.14159));
   }
   
@@ -138,21 +147,22 @@ int main(int argc, char **argv) {
   const int npar = 2;              // the number of parameters
  
   TMinuit minuit(npar);
-  minuit.SetFCN(fcn);              // the fcn to be minized 
-  // (eg calculates chi^2 or NLL, not the parameterization of the data!
+  minuit.SetFCN(fcn);              // the fcn to be minized (objective fcn) 
+  // this calculates chi^2 or NLL, it is not the parameterization of the data!
 
+  // Make a TF1, we can use this to fit the data and plot the results
+  TF1* myfunc = new TF1("myfunc", expPdf, xmin, xmax, npar);  
+  double par[npar];               // the free parameters
+  double stepSize[npar];          // (limiting) step sizes for parameters
+  double minVal[npar];            // minimum/maximum bounds on parameters 
+  double maxVal[npar];            
+  TString parName[npar];          // Optional names for nicer output!
 
-  TF1* myfunc = new TF1("myfunc", expPdf, xmin, xmax, npar);  // use this to fit the data and get results
-  double par[npar];               // the start values
-  double stepSize[npar];          // step sizes 
-  double minVal[npar];            // minimum bound on parameter 
-  double maxVal[npar];            // maximum bound on parameter
-  TString parName[npar];
-
+  // Initial parametes MUST be set by some means to get things started
   par[0] = hexp->GetMaximum();       // guesses for starting the fit
-  par[1] = -2;                       // this MUST be done by some means to get things started
-  stepSize[0] = TMath::Abs(par[0]*0.1);   // usually 10% is OK for an initial step size, YMMV
-  stepSize[1] = TMath::Abs(par[1]*0.1);   // step size MUST be positive!
+  par[1] = -2;                      
+  stepSize[0] = TMath::Abs(par[0]*0.1);   // usually 10% of initial guess is OK for starting step size, YMMV
+  stepSize[1] = TMath::Abs(par[1]*0.1);   // step sizes MUST be positive!
   minVal[0] = 0;      // if min and max values = 0, parameter is unbounded.
   maxVal[0] = 0;
   minVal[1] = 0; 
@@ -169,29 +179,36 @@ int main(int argc, char **argv) {
 
   // here we define the pointers to pass information to Minuit's fcn
   // not pretty, but sinple
-  hdata=hexp;
-  fparam=myfunc;
+  hdata=hexp;     // histogram to fit
+  fparam=myfunc;  // our model
 
   // Do the minimization!
   minuit.Migrad();       // Minuit's best minimization algorithm
+
+  // Get the result
   double outpar[npar], err[npar];
   for (int i=0; i<npar; i++){
     minuit.GetParameter(i,outpar[i],err[i]);
   }
   // run a minos error analysis
+  // this perfoms a brute force scan around the minimum of the objective function
+  // to better estimates of the errors on the fit parameters
   gMinuit->mnmnos();
 
-  // Plot the result.
-  hdata->Draw("e");
+  // store the fit parameters in out TF1, decorate our function
   myfunc->SetParameters(outpar);
-  myfunc->Draw("same");
 
   myfunc->SetLineStyle(1);             //  1 = solid, 2 = dashed, 3 = dotted
   myfunc->SetLineColor(1);             //  black (default)
-  myfunc->SetLineWidth(1);
+  myfunc->SetLineWidth(2);
 
   myfunc->GetXaxis()->SetTitle("x");
   myfunc->GetYaxis()->SetTitle("f(x;#lambda)");
+
+  // Plot the result.
+  hdata->Draw("e");
+  myfunc->Draw("same");
+
 
 
   cout << "\nTo exit, quit ROOT from the File menu of the plot (or use control-C)" << endl;

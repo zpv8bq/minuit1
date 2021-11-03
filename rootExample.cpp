@@ -1,4 +1,4 @@
-// A simple C++ program to illustrate the use of ROOT classes
+// A simple C++ program to illustrate the use of some ROOT classes
 // in your code
 
 #include <iostream>
