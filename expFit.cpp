@@ -67,17 +67,18 @@ double expPdf(double* xPtr, double par[]){
 // This is our OBJECTIVE Function
 // return NLL given a histogram and function
 
-double calcNLL(TH1F* h, TF1* f){
-  double nll=0;
+double calcChiSquare(TH1F* h, TF1* f){
+  double chi2=0;
   for (int i=1; i<=h->GetNbinsX(); i++){
     double x=h->GetBinCenter(i);
-    int n=(int)(h->GetBinContent(i));
+    double n=h->GetBinContent(i);
     double mu=f->Eval(x);
-    if (mu<1e-10) mu=1e-10;    // avoid log(0) problems if we go outside a reasonable range!
-    nll -= n * TMath::Log(mu) - mu  - TMath::LnGamma(n+1);
+    double sigma = h->GetBinError(i);
+    if (sigma<1e-10) sigma=1e-10;    // avoid log(0) problems if we go outside a reasonable range!
+    chi2 += TMath::Power((n-mu)/sigma,2);
   }
   // cout << "nll "<< nll <<endl;
-  return 2*nll;   // factor of 2 so the 1 sigma error contours follow the chi^2 convention
+  return chi2;   // factor of 2 so the 1 sigma error contours follow the chi^2 convention
 }
 
 
@@ -98,7 +99,7 @@ void fcn(int& npar, double* deriv, double& f, double par[], int flag){
     fparam->SetParameter(i,par[i]);
   }
 
-  f = calcNLL(hdata,fparam);
+  f = calcChiSquare(hdata,fparam);
  
 }
 
@@ -222,7 +223,7 @@ int main(int argc, char **argv) {
   double fmin, fedm, errdef;
   int npari, nparx, istat;  // see https://root.cern/doc/master/classTMinuit.html 
   minuit.mnstat(fmin, fedm, errdef, npari, nparx, istat);
-  cout << "minimum of NLL = " << fmin << endl;
+  cout << "minimum of ChiSquare = " << fmin << endl;
   cout << "fit status = " << istat << endl;
   cout << "best fit parameters\n" <<endl;
   for (int i=0; i<npar; ++i){

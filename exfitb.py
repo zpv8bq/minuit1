@@ -1,0 +1,113 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from lmfit import Model, Parameters
+from scipy.stats import chi2
+import uproot
+
+
+def load_hist(filename, histname):
+    hist = uproot.open(filename)[histname]
+    counts = hist.values()
+    edges = hist.axis().edges()
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    errors = np.sqrt(counts)
+    errors[errors == 0] = 1
+    return centers, counts, errors
+
+
+def double_gaussian(x, A1, mu1, sigma1, A2, mu2, sigma2):
+    g1 = A1 * np.exp(-0.5 * ((x - mu1) / sigma1) ** 2)
+    g2 = A2 * np.exp(-0.5 * ((x - mu2) / sigma2) ** 2)
+    return g1 + g2
+
+
+def gumbel(x, A, beta, mu):
+    z = np.clip((x - mu) / beta, -50, 50)
+    return A * np.exp(-(z + np.exp(-z)))
+
+
+def chi2_stats(data, model, errors, nparams):
+    chi2_val = np.sum(((data - model) / errors) ** 2)
+    ndof = len(data) - nparams
+    pval = chi2.sf(chi2_val, ndof)
+    return chi2_val, ndof, pval
+
+
+def nll(data, model):
+    return np.sum(model - data * np.log(model + 1e-10))
+
+
+def fit_and_plot():
+    x, y, yerr = load_hist("distros.root", "dist1")
+    mask = y > 0
+    x_fit, y_fit, yerr_fit = x[mask], y[mask], yerr[mask]
+
+    dg_model = Model(double_gaussian, nan_policy='omit')
+    dg_params = Parameters()
+    dg_params.add_many(('A1', 1000, True, 0, None), ('mu1', 65, True, 50, 80), ('sigma1', 6, True, 1, 20),('A2', 600, True, 0, None), ('mu2', 80, True, 60, 100), ('sigma2', 8, True, 1, 20))
+    dg_result = dg_model.fit(y_fit, dg_params, x=x_fit, weights=1 / yerr_fit, method='least_squares')
+    dg_fit = dg_model.eval(dg_result.params, x=x_fit)
+    dg_chi2, dg_ndof, dg_pval = chi2_stats(y_fit, dg_fit, yerr_fit, dg_result.nvarys)
+    dg_nll = nll(y_fit, dg_fit)
+
+    g_model = Model(gumbel, nan_policy='omit')
+    g_params = Parameters()
+    g_params.add_many(('A', 1200, True, 0, None), ('beta', 10, True, 1, 50), ('mu', 70, True, 50, 100))
+    g_result = g_model.fit(y_fit, g_params, x=x_fit, weights=1 / yerr_fit, method='least_squares')
+    g_fit = g_model.eval(g_result.params, x=x_fit)
+    g_chi2, g_ndof, g_pval = chi2_stats(y_fit, g_fit, yerr_fit, g_result.nvarys)
+    g_nll = nll(y_fit, g_fit)
+
+    k_diff = dg_result.nvarys - g_result.nvarys
+    lrt_stat = 2 * (g_nll - dg_nll)
+    lrt_pval = chi2.sf(lrt_stat, k_diff)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    def annotate(ax, x_vals, fit_vals, label, chi2_val, ndof, pval, color):
+        ax.errorbar(x_fit, y_fit, yerr=yerr_fit, fmt='ko', markersize=4, capsize=2, label='Data')
+        ax.plot(x_vals, fit_vals, color, lw=2, label=label)
+        ax.set_xlabel('x')
+        ax.set_ylabel('Counts')
+        ax.set_title(label)
+        ax.legend()
+        ax.grid(alpha=0.3)
+        stats = f"chi2/ndof = {chi2_val:.2f}/{ndof} = {(chi2_val / ndof):.3f}\n" \
+                f"p-value = {pval:.4f}"
+        ax.text(0.95, 0.2, stats, transform=ax.transAxes, fontsize=10,
+                verticalalignment='bottom', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    annotate(ax1, x_fit, dg_fit, "Double Gaussian Fit", dg_chi2, dg_ndof, dg_pval, 'r-')
+    annotate(ax2, x_fit, g_fit, "Gumbel Fit", g_chi2, g_ndof, g_pval, 'b-')
+
+    with PdfPages("ex1.pdf") as pdf:
+        plt.tight_layout()
+        pdf.savefig(fig)
+        plt.close()
+
+        summary_fig = plt.figure(figsize=(8.5, 11))
+        summary_text = (
+            "Double Gaussian: \n"
+            f"Chi2/ndof = {dg_chi2:.2f}/{dg_ndof} = {dg_chi2 / dg_ndof:.3f}\n"
+            f"p-value = {dg_pval:.6f}\n"
+            f"NLL = {dg_nll:.2f}\n\n"
+            "Gumbel: \n"
+            f"Chi2/ndof = {g_chi2:.2f}/{g_ndof} = {g_chi2 / g_ndof:.3f}\n"
+            f"p-value = {g_pval:.6f}\n"
+            f"NLL = {g_nll:.2f}\n\n"
+            " Likelihood Ratio Test: \n"
+            f"-2delt_lnL = {lrt_stat:.2f}\n"
+            f"delt_k = {k_diff}\n"
+            f"p_lrt = {lrt_pval:.6f}\n\n"
+            " Gumbel model best fits the data based on reduced chi and p-value near 1 and the p_lrt being significantly grater than 0.05"
+            " Double gaussian has a significant chi2 reduce and p-value of 0 which demonstrates a poor fit "
+        )
+        summary_fig.text(0.05, 0.95, summary_text, fontsize=10, va='top', ha='left', wrap=True)
+        pdf.savefig(summary_fig)
+        plt.close()
+
+
+if __name__ == "__main__":
+    fit_and_plot()
